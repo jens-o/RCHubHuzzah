@@ -23,10 +23,10 @@
 #define TX_PIN                13
 
 // The DHT data pin
-#define DHTPIN 2 
+#define DHTPIN 5 
 
 // The DHT data type
-//#define DHTTYPE DHT11 
+#define DHTTYPE DHT22 
 
 #define DALLAS
 
@@ -38,6 +38,7 @@
 
 // Data wire is plugged into port on the Arduino
 #define ONE_WIRE_BUS 12
+
 
 int nbrCalls = DEFAULT_NBR_CALLS;
 
@@ -63,9 +64,12 @@ Hasta hastaBlind = Hasta(TX_PIN);
 DHT dht(DHTPIN, DHTTYPE);
 #endif
 
+// Create Variable to store altitude in (m) for calculations;
+double base_altitude = 1655.0; // Altitude of SparkFun's HQ in Boulder, CO. in (m)
+
 // Initialize Mqtt Client
 PubSubClient mqttClient(client);
-char msg[20];
+char payload[20];
 long lastMsg = 0;
 long sensorInterval = DEFAULT_SENSOR_INTERVAL;
 
@@ -133,6 +137,7 @@ void setup(void)
 
   // Setup Mqtt Client
   mqttClient.setServer("192.168.1.6", 1883);
+  mqttClient.setCallback(callback);
 }
 
 void loop()
@@ -159,7 +164,11 @@ void loop()
     Serial.println("[Client disonnected]");
   }
 
+  if (!mqttClient.connected()) {
+    reconnect();
+  }
   
+  mqttClient.loop();
 
   long now = millis();
   if(now - lastMsg > sensorInterval) {
@@ -175,23 +184,23 @@ void publishSensors() {
   if (!mqttClient.connected()) {
     reconnect();
   }
-  mqttClient.loop();
+  //mqttClient.loop();
 
 #ifdef DALLAS
   sensors.requestTemperatures(); // Send the command to get temperatures
   value = sensors.getTempC(insideThermometer);
-  dtostrf(value,3,1,msg);
-  mqttClient.publish("huzzah1/exttemp", msg);
+  dtostrf(value,3,1,payload);
+  mqttClient.publish("k16/esp1/temp2", payload);
 #endif
 
 #ifdef DHTTYPE
   value = dht.readTemperature();
-  dtostrf(value,3,1,msg);
-  mqttClient.publish("huzzah1/temp", msg);
+  dtostrf(value,3,1,payload);
+  mqttClient.publish("k16/esp1/temp1", payload);
 
   value = dht.readHumidity();
-  dtostrf(value,3,1,msg);
-  mqttClient.publish("huzzah1/hum", msg);
+  dtostrf(value,2,0,payload);
+  mqttClient.publish("k16/esp1/hum1", payload);
 #endif
 }
 
@@ -388,7 +397,7 @@ void reconnect() {
       // Once connected, publish an announcement...
       mqttClient.publish("temp", "hello world");
       // ... and resubscribe
-      //client.subscribe("inTopic");
+      mqttClient.subscribe("k16/esp1/command");
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
@@ -398,3 +407,26 @@ void reconnect() {
     }
   }
 }
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+/*
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is acive low on the ESP-01)
+  } else {
+    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+  }
+  */
+}
+
+
