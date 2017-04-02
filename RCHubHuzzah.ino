@@ -53,8 +53,7 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress insideThermometer;
 #endif
 
-// Create an instance of the server
-WiFiServer server(LISTEN_PORT);
+// Wifi client
 WiFiClient client;
 
 Hasta hastaBlind = Hasta(TX_PIN);
@@ -64,14 +63,13 @@ Hasta hastaBlind = Hasta(TX_PIN);
 DHT dht(DHTPIN, DHTTYPE);
 #endif
 
-// Create Variable to store altitude in (m) for calculations;
-double base_altitude = 1655.0; // Altitude of SparkFun's HQ in Boulder, CO. in (m)
-
 // Initialize Mqtt Client
 PubSubClient mqttClient(client);
 char payload[20];
 long lastMsg = 0;
 long sensorInterval = DEFAULT_SENSOR_INTERVAL;
+
+String deviceId = "esp1";
 
 void setup(void)
 {
@@ -132,9 +130,6 @@ void setup(void)
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-  // Start the server
-  server.begin();
-
   // Setup Mqtt Client
   mqttClient.setServer("192.168.1.6", 1883);
   mqttClient.setCallback(callback);
@@ -142,28 +137,6 @@ void setup(void)
 
 void loop()
 {
-  WiFiClient client = server.available(); 
-  // wait for a client (web browser) to connect
-  if (client)
-  {
-    Serial.println("\n[Client connected]");
-    while (client.connected())
-    {
-      // read line by line what the client (web browser) is requesting
-      if (client.available())
-      {
-        client.print(process(client));
- 
-        delay(1); // give the web browser time to receive the data
-
-        // close the connection:
-        client.stop();
-      }
-   }
- 
-    Serial.println("[Client disonnected]");
-  }
-
   if (!mqttClient.connected()) {
     reconnect();
   }
@@ -184,8 +157,7 @@ void publishSensors() {
   if (!mqttClient.connected()) {
     reconnect();
   }
-  //mqttClient.loop();
-
+  
 #ifdef DALLAS
   sensors.requestTemperatures(); // Send the command to get temperatures
   value = sensors.getTempC(insideThermometer);
@@ -204,178 +176,6 @@ void publishSensors() {
 #endif
 }
 
-
-String process(WiFiClient client) {
-  
-  // Jump over HTTP action
-  client.readStringUntil('/');
-
-  // Just return if not an API call
-  if(client.readStringUntil('/') != "api") {
-    return String("HTTP/1.1 400 Bad Request\r\n") +
-            "Content-Type: text/html\r\n" +
-            "\r\n";
-  }
-
-  // Get the command
-  String command = client.readStringUntil('/');
-
-  if (command == "setswitch") {
-    setSwitch(client);
-  }
-  else if (command == "setblind") {
-    setBlind(client);
-  }
-  /*
-  else if (command == "getweather") {
-    return getWeather(client);
-  }
-  */
-  else {
-    Serial.print("Received unknown command: ");
-    Serial.println(command);
-
-    return String("HTTP/1.1 400 Bad Request\r\n") +
-            "Content-Type: text/html\r\n" +
-            "\r\n";
-  }
-    
-  return String("HTTP/1.1 200 OK\r\n") +
-            "Content-Type: text/html\r\n" +
-            "\r\n";
-}
-
-// Custom function accessible by the API
-void setSwitch(WiFiClient client) {
-  bool on = false;
-  
-  if (client.readStringUntil('/') == "on") {
-    on = true;
-  }
-
-  // Get first param
-  unsigned int device = client.parseInt();
-
-  unsigned long remoteId = (unsigned long)client.parseInt();
-
-  NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, 1);
-
-  client.flush();
-  
-  bool group = false;
-
-  Serial.print("switchOnOff() called: ");
-  Serial.print(remoteId);
-  Serial.print(":");
-  Serial.print(device);
-  Serial.print(":");
-  Serial.println(on);
-
-  transmitter.sendUnit(device-1, on);
-
-/*
-  String msg = on ? "on" : "off";
-  String topic = "nexa/" + String(remoteId) + "/" + String(device);
-
-  char msgBuf[4];
-  msg.toCharArray(msgBuf, 4);
-
-  char topicBuf[20];
-  topic.toCharArray(topicBuf, 20);
-  
-  mqttClient.publish(topicBuf, msgBuf);
-*/
-}
-
-void setBlind(WiFiClient client) {
-  String command = client.readStringUntil('/');
-  int unit = client.parseInt();
-  int house = client.parseInt();
-
-  client.flush();
-  
-  Serial.print("blind() called: ");
-  Serial.print(house);
-  Serial.print(":");
-  Serial.print(unit);
-  Serial.print(":");
-  Serial.println(command);
-
-  for(int i=0; i<nbrCalls; i++)
-  {
-    if (command == "stop") {
-      hastaBlind.stop(house, unit);
-    }
-    else if (command == "down") {
-      hastaBlind.down(house, unit);
-    }
-    else if (command == "up") {
-      hastaBlind.up(house, unit);
-    }
-  }
-}
-
-/*
-String getWeather(WiFiClient client)
-{
-  int unit = client.parseInt();
-
-  float t;
-  float h;
-
-  Serial.print("Requesting temperatures...");
-  
-  switch(unit) {
-    case 0: // Dallas      
-      sensors.requestTemperatures(); // Send the command to get temperatures
-      Serial.println("DONE");
-      t = sensors.getTempC(insideThermometer);
-      h = 0;
-      break;
-    case 1: // DHT
-      h = dht.readHumidity();
-      t = dht.readTemperature();
-
-      // Check if any reads failed and exit early (to try again).
-      if (isnan(h) || isnan(t)) {
-        Serial.println("Failed to read from DHT sensor!");
-
-        return String(
-                "HTTP/1.1 405 Internal Server Error\r\n"
-                "Content-Type: text/html\r\n"
-                "\r\n");
-      }
-      break;
-  } 
-    
-  Serial.print("Humidity: ");
-  Serial.print(h);
-  Serial.print(" %\t");
-  Serial.print("Temperature: ");
-  Serial.print(t);
-  Serial.println(" *C ");
-  
-  client.flush();
-
-  return String(
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/json\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "{\r\n"
-            "\"temperature\": ") +
-         String(t) +
-         String(
-            ",\r\n"
-            "\"humidity\": ") +
-         String(h) +
-         String(
-            "\r\n"
-            "}\r\n"
-            "\r\n");
-}
-*/
-
 // function to print a device address
 void printAddress(DeviceAddress deviceAddress)
 {
@@ -392,12 +192,13 @@ void reconnect() {
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqttClient.connect("ESP8266Client")) {
+    if (mqttClient.connect("esp1")) {
       Serial.println("connected");
       // Once connected, publish an announcement...
-      mqttClient.publish("temp", "hello world");
+      mqttClient.publish("log/k16", "connected");
       // ... and resubscribe
-      mqttClient.subscribe("k16/esp1/command");
+      mqttClient.subscribe("cmd/k16/nexa/#");
+      mqttClient.subscribe("cmd/k16/hasta/#");
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
@@ -409,24 +210,113 @@ void reconnect() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+  String t[6];
+  String Topic = String(topic);
+  int lastIdx = 0;
+  char status[1];
+
+  for(int i=0; i<6; i++) {
+    int idx = Topic.indexOf('/', lastIdx + 1);
+    t[i] = Topic.substring(lastIdx, idx);
+    lastIdx = idx+1; 
+
+    Serial.println(t[i]);
   }
-  Serial.println();
+
+  if(t[0] != "cmd") {
+    Serial.println("Not a command.");
+    
+    return;
+  }
+
+  if(t[1] != "k16") {
+    Serial.println("Not for k16.");
+    
+    return;
+  }
+  /*
+   * t[0] - cmd
+   * t[1] - k16
+   * t[2] - <bridge> - ex. nexa, hasta
+   * t[3] - <command> - ex. seton
+   * t[4] - <remote/house>
+   * t[5] - <unit>
+   */
+
+  if(t[2] == "nexa")
+  {
+    unsigned int device = t[5].toInt();
+    unsigned long remoteId = (unsigned long)t[4].toInt();
+    bool on = false;
 
 /*
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+    Serial.print("RemoteId: ");
+    Serial.println(remoteId);
+    Serial.print("TX_PIN: ");
+    Serial.println(TX_PIN);
+*/    
+    NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, 3);
+
+    if(t[3] == "seton") {
+      Serial.print("Payload: ");
+      Serial.println((char)payload[0]);
+
+      if(((char)payload[0] == 't') || ((char)payload[0] == 'T') || ((char)payload[0] == '1')) {
+        on = true;
+        status[0] = '1';
+      } 
+      else {
+        on = false;
+        status[0] = '0';
+      }
+        
+      transmitter.sendUnit(device-1, on);   
+/*
+        Serial.print("Sent ");
+        Serial.print(on);
+        Serial.print(" to ");
+        Serial.print(remoteId);
+        Serial.print(":");
+        Serial.println(device-1);
+*/
+    }
   }
-  */
+  else if (t[2] == "hasta") {
+    long house = t[4].toInt();
+    int unit = t[5].toInt();
+    
+    for(int i=0; i<nbrCalls; i++)
+    {
+      if((char)payload[0] == 's') {  //stop
+        hastaBlind.stop(house, unit);
+        status[0] = '1';
+        Serial.println("Stop");
+      }
+      else if(((char)payload[0] == 'd') || ((char)payload[0] == '1')) { //down
+        hastaBlind.down(house, unit);
+        status[0] = '1';
+        Serial.println("Down");
+      }
+      else if(((char)payload[0] == 'u') || ((char)payload[0] == '0')) { //up
+        hastaBlind.up(house, unit);
+        status[0] = '0';
+        Serial.println("Up");
+      }
+    }
+  }
+
+  String strResponseTopic = "k16/" + t[2] + "/" + t[4] + "/" + t[5] + "/" + t[3];
+  char responseTopic[strResponseTopic.length() + 1];
+  
+  Serial.println(responseTopic);
+
+  strResponseTopic.toCharArray(responseTopic, strResponseTopic.length() + 1);
+  
+  mqttClient.publish(responseTopic, status);
 }
 
+void ByteToChar(byte* bytes, char* chars, unsigned int count) {
+    for(unsigned int i = 0; i < count; i++)
+         chars[i] = (char)bytes[i];
+}
 
