@@ -47,48 +47,71 @@ DHT dht(DHTPIN, DHTTYPE);
 double base_altitude = 1655.0; // Altitude of SparkFun's HQ in Boulder, CO. in (m)
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  char *token, *device, *subDevice1, *subDevice2, *saveptr;
+  char *token, *house, *device, *subDevice1, *subDevice2, *saveptr;
+  char pld[length];
 
   Serial.print("Message arrived: ");
   Serial.println(topic);
 
   token = strtok_r(topic, "/", &saveptr);
   // Just skip cmd
-  token = strtok_r(NULL, "/", &saveptr);
-  // Just skip house (k16)
+  house = strtok_r(NULL, "/", &saveptr);
   device = strtok_r(NULL, "/", &saveptr);
-  //Serial.print("Device: "); Serial.println(device);
   subDevice1 = strtok_r(NULL, "/", &saveptr);
-  //Serial.print("SubDevice1: "); Serial.println(subDevice1);
   subDevice2 = strtok_r(NULL, "/", &saveptr);
-  //Serial.print("SubDevice2: "); Serial.println(subDevice2);
 
-  /*
-  Serial.print("Payload:");
+  // Convert payload to char[]
   for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    pld[i] = (char)payload[i];
   }
-  Serial.println();
-  */
 
   if (strcmp(device, "nexa") == 0) {
     unsigned long remoteId;
     unsigned int switchId;
-    bool on = false;
-
+    
     if ((remoteId = strtoul(subDevice1, NULL, 10)) > 0) {
       if ((switchId = (unsigned int)strtoul(subDevice2, NULL, 10)) > 0) {
         if (switchId <= 3) {
-          
-          setSwitch(remoteId, switchId, on);
+          if ((strcmp(pld, "on") == 0) || (strcmp(pld, "1") == 0) || (strcmp(pld, "true") == 0))
+            setSwitch(remoteId, switchId, true);
+          else
+            setSwitch(remoteId, switchId, false);
         }
       }
     }
-    
-    
   }
   else if (strcmp(device, "hasta") == 0) {
+    unsigned long remoteId;
+    unsigned int unitId;
     
+    if ((remoteId = strtoul(subDevice1, NULL, 10)) > 0) {
+      if ((unitId = (unsigned int)strtoul(subDevice2, NULL, 10)) > 0) {
+        if (unitId <= 3) {
+          for(int i=0; i<nbrCalls; i++)
+          {
+            if (strcmp(pld, "stop") == 0) {
+              hastaBlind.stop(remoteId, unitId);
+            }
+            else if (strcmp(pld, "down") == 0) {
+              hastaBlind.down(remoteId, unitId);
+            }
+            else if (strcmp(pld, "up") == 0) {
+              hastaBlind.up(remoteId, unitId);
+            }
+          }
+        }
+      }
+    }
+  }
+  else if (strcmp(device, "led") == 0) {
+    int pin;
+    
+    if ((pin = atoi(subDevice1)) > 0) {
+      if ((strcmp(pld, "on") == 0) || (strcmp(pld, "1") == 0)) 
+        setLed(pin, true);
+      else
+        setLed(pin, false);
+    }
   }
 }
 
@@ -146,6 +169,13 @@ void setup(void)
   Serial.print("Device 0 Resolution: ");
   Serial.print(sensors.getResolution(insideThermometer), DEC); 
   Serial.println();
+#endif
+
+#ifdef LED
+  pinMode(12, OUTPUT); // Blue
+  pinMode(13, OUTPUT); // Green
+  pinMode(14, OUTPUT); // Yellow
+  pinMode(15, OUTPUT); // Red
 #endif
 
 #ifdef DHTTYPE
@@ -233,11 +263,11 @@ void publishSensors() {
 #ifdef DHTTYPE
   value = dht.readTemperature();
   dtostrf(value,3,1,payload);
-  mqttClient.publish("k16/esp2/temp1", payload);
+  mqttClient.publish("k16/esp1/temp1", payload);
 
   value = dht.readHumidity();
   dtostrf(value,2,0,payload);
-  mqttClient.publish("k16/esp2/hum1", payload);
+  mqttClient.publish("k16/esp1/hum1", payload);
 #endif
 }
 
@@ -291,11 +321,14 @@ void setSwitch(unsigned long remoteId, unsigned int switchId, bool on) {
 
   Serial.print("On: ");
   Serial.println(on);
-  /*
+  
   NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, 1);
 
-  transmitter.sendUnit(deviceId-1, on);
-  */
+  for(int i=0; i<nbrCalls; i++)
+  {
+    transmitter.sendUnit(switchId - 1, on);
+    delay(10);
+  }
 }
 
 // Custom function accessible by the API
@@ -351,6 +384,18 @@ void setBlind(WiFiClient client) {
     }
     else if (command == "up") {
       hastaBlind.up(house, unit);
+    }
+  }
+}
+
+void setLed(int pin, bool on)
+{
+  if ((pin >= 12) && (pin <= 16)) {
+    if (on) {
+      digitalWrite(pin, HIGH);
+    }
+    else {
+      digitalWrite(pin, LOW);
     }
   }
 }
@@ -432,11 +477,18 @@ void reconnect() {
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqttClient.connect(DEVICE_ID)) {
+    if (mqttClient.connect(deviceid)) {
       Serial.println("connected");
-      // ... resubscribe
+      // Resubscribe
+#ifdef NEXA
       mqttClient.subscribe("cmd/k16/nexa/#");
+#endif
+#ifdef HASTA
       mqttClient.subscribe("cmd/k16/hasta/#");
+#endif
+#ifdef LED
+      mqttClient.subscribe("cmd/k16/led/#");
+#endif
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
