@@ -14,31 +14,7 @@
 #include <PubSubClient.h>
 #include <stdlib.h>
 
-#include "wifiparams.h"
-
-// The port to listen for incoming TCP connections
-#define LISTEN_PORT           80
-
-// The 433 TX pin
-#define TX_PIN                13
-
-// The DHT data pin
-#define DHTPIN 5 
-
-// The DHT data type
-#define DHTTYPE DHT22 
-
-#define DALLAS
-
-// The default nbr of 433 calls
-#define DEFAULT_NBR_CALLS 5
-
-// Default interval reading sensor values
-#define DEFAULT_SENSOR_INTERVAL 30000 // 30s
-
-// Data wire is plugged into port on the Arduino
-#define ONE_WIRE_BUS 12
-
+#include "config_esp2.h"
 
 int nbrCalls = DEFAULT_NBR_CALLS;
 
@@ -53,8 +29,11 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress insideThermometer;
 #endif
 
+#ifdef WIFI_SERVER
 // Create an instance of the server
 WiFiServer server(LISTEN_PORT);
+#endif
+
 WiFiClient client;
 
 Hasta hastaBlind = Hasta(TX_PIN);
@@ -67,11 +46,71 @@ DHT dht(DHTPIN, DHTTYPE);
 // Create Variable to store altitude in (m) for calculations;
 double base_altitude = 1655.0; // Altitude of SparkFun's HQ in Boulder, CO. in (m)
 
+void callback(char* topic, byte* payload, unsigned int length) {
+  char *token, *device, *subDevice1, *subDevice2, *saveptr;
+
+  Serial.print("Message arrived: ");
+  Serial.println(topic);
+
+  token = strtok_r(topic, "/", &saveptr);
+  // Just skip cmd
+  token = strtok_r(NULL, "/", &saveptr);
+  // Just skip house (k16)
+  device = strtok_r(NULL, "/", &saveptr);
+  //Serial.print("Device: "); Serial.println(device);
+  subDevice1 = strtok_r(NULL, "/", &saveptr);
+  //Serial.print("SubDevice1: "); Serial.println(subDevice1);
+  subDevice2 = strtok_r(NULL, "/", &saveptr);
+  //Serial.print("SubDevice2: "); Serial.println(subDevice2);
+
+  /*
+  Serial.print("Payload:");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+  */
+
+  if (strcmp(device, "nexa") == 0) {
+    unsigned long remoteId;
+    unsigned int switchId;
+    bool on = false;
+
+    if ((remoteId = strtoul(subDevice1, NULL, 10)) > 0) {
+      if ((switchId = (unsigned int)strtoul(subDevice2, NULL, 10)) > 0) {
+        if (switchId <= 3) {
+          
+          setSwitch(remoteId, switchId, on);
+        }
+      }
+    }
+    
+    
+  }
+  else if (strcmp(device, "hasta") == 0) {
+    
+  }
+}
+
+/*
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is acive low on the ESP-01)
+  } else {
+    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+  }
+  */
+
+
 // Initialize Mqtt Client
-PubSubClient mqttClient(client);
+PubSubClient mqttClient("192.168.1.6", 1883, callback, client);
 char payload[20];
 long lastMsg = 0;
 long sensorInterval = DEFAULT_SENSOR_INTERVAL;
+
+
 
 void setup(void)
 {
@@ -134,14 +173,11 @@ void setup(void)
 
   // Start the server
   server.begin();
-
-  // Setup Mqtt Client
-  mqttClient.setServer("192.168.1.6", 1883);
-  mqttClient.setCallback(callback);
 }
 
 void loop()
 {
+#ifdef WIFI_SERVER
   WiFiClient client = server.available(); 
   // wait for a client (web browser) to connect
   if (client)
@@ -167,7 +203,8 @@ void loop()
   if (!mqttClient.connected()) {
     reconnect();
   }
-  
+#endif
+
   mqttClient.loop();
 
   long now = millis();
@@ -196,11 +233,11 @@ void publishSensors() {
 #ifdef DHTTYPE
   value = dht.readTemperature();
   dtostrf(value,3,1,payload);
-  mqttClient.publish("k16/esp1/temp1", payload);
+  mqttClient.publish("k16/esp2/temp1", payload);
 
   value = dht.readHumidity();
   dtostrf(value,2,0,payload);
-  mqttClient.publish("k16/esp1/hum1", payload);
+  mqttClient.publish("k16/esp2/hum1", payload);
 #endif
 }
 
@@ -245,6 +282,22 @@ String process(WiFiClient client) {
             "\r\n";
 }
 
+void setSwitch(unsigned long remoteId, unsigned int switchId, bool on) {
+  Serial.print("Remote: ");
+  Serial.println(remoteId);
+
+  Serial.print("Switch: ");
+  Serial.println(switchId);
+
+  Serial.print("On: ");
+  Serial.println(on);
+  /*
+  NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, 1);
+
+  transmitter.sendUnit(deviceId-1, on);
+  */
+}
+
 // Custom function accessible by the API
 void setSwitch(WiFiClient client) {
   bool on = false;
@@ -272,19 +325,6 @@ void setSwitch(WiFiClient client) {
   Serial.println(on);
 
   transmitter.sendUnit(device-1, on);
-
-/*
-  String msg = on ? "on" : "off";
-  String topic = "nexa/" + String(remoteId) + "/" + String(device);
-
-  char msgBuf[4];
-  msg.toCharArray(msgBuf, 4);
-
-  char topicBuf[20];
-  topic.toCharArray(topicBuf, 20);
-  
-  mqttClient.publish(topicBuf, msgBuf);
-*/
 }
 
 void setBlind(WiFiClient client) {
@@ -392,12 +432,11 @@ void reconnect() {
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqttClient.connect("ESP8266Client")) {
+    if (mqttClient.connect(DEVICE_ID)) {
       Serial.println("connected");
-      // Once connected, publish an announcement...
-      mqttClient.publish("temp", "hello world");
-      // ... and resubscribe
-      mqttClient.subscribe("k16/esp1/command");
+      // ... resubscribe
+      mqttClient.subscribe("cmd/k16/nexa/#");
+      mqttClient.subscribe("cmd/k16/hasta/#");
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
@@ -408,25 +447,6 @@ void reconnect() {
   }
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
 
-/*
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
-  }
-  */
-}
 
 
