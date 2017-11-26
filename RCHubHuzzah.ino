@@ -6,6 +6,8 @@
 
 // Import required libraries
 #include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
+#include <WiFiUdp.h>
 #include <NewRemoteTransmitter.h>
 #include <Hasta.h>
 #include <OneWire.h>
@@ -14,7 +16,17 @@
 #include <PubSubClient.h>
 #include <stdlib.h>
 
+#include <AzureIoTHub.h>
+#include <AzureIoTProtocol_MQTT.h>
+#include <AzureIoTUtility.h>
+
 #include "config_esp2.h"
+
+static bool messagePending = false;
+static bool messageSending = true;
+
+static int interval = INTERVAL;
+int lastPublish = 0;
 
 int nbrCalls = DEFAULT_NBR_CALLS;
 
@@ -34,9 +46,9 @@ DeviceAddress insideThermometer;
 WiFiServer server(LISTEN_PORT);
 #endif
 
-WiFiClient client;
-
+#ifdef HASTA
 Hasta hastaBlind = Hasta(TX_PIN);
+#endif
 
 #ifdef DHTTYPE
 // Initialize DHT sensor.
@@ -46,7 +58,8 @@ DHT dht(DHTPIN, DHTTYPE);
 // Create Variable to store altitude in (m) for calculations;
 double base_altitude = 1655.0; // Altitude of SparkFun's HQ in Boulder, CO. in (m)
 
-void callback(char* topic, byte* payload, unsigned int length) {
+#ifdef MQTT
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
   char *token, *house, *device, *subDevice1, *subDevice2, *saveptr;
   char pld[length];
 
@@ -85,8 +98,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
     unsigned int unitId;
     
     if ((remoteId = strtoul(subDevice1, NULL, 10)) > 0) {
-      if ((unitId = (unsigned int)strtoul(subDevice2, NULL, 10)) > 0) {
+      if ((unitId = (unsigned int)strtoul(subDevice2, NULL, 10)) >= 0) {
         if (unitId <= 3) {
+#ifdef HASTA
           for(int i=0; i<nbrCalls; i++)
           {
             if (strcmp(pld, "stop") == 0) {
@@ -99,112 +113,74 @@ void callback(char* topic, byte* payload, unsigned int length) {
               hastaBlind.up(remoteId, unitId);
             }
           }
+#endif
         }
       }
     }
   }
-  else if (strcmp(device, "led") == 0) {
+  else if (strcmp(device, "io") == 0) {
     int pin;
     
     if ((pin = atoi(subDevice1)) > 0) {
       if ((strcmp(pld, "on") == 0) || (strcmp(pld, "1") == 0)) 
-        setLed(pin, true);
+        setIO(pin, true);
       else
-        setLed(pin, false);
+        setIO(pin, false);
     }
   }
 }
 
-/*
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is acive low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
-  }
-  */
-
-
 // Initialize Mqtt Client
-PubSubClient mqttClient("192.168.1.6", 1883, callback, client);
+WiFiClient client;
+PubSubClient mqttClient(MQTT_SERVER, MQTT_PORT, mqttCallback, client);
+#endif
+
 char payload[20];
-long lastMsg = 0;
-long sensorInterval = DEFAULT_SENSOR_INTERVAL;
 
-
-
+static IOTHUB_CLIENT_LL_HANDLE iotHubClientHandle;
 void setup(void)
 {
   // Start Serial
   Serial.begin(115200);
 
-#ifdef DALLAS
-  Serial.println("Setup Temperature Sensor");
+  initDallas();
 
-  // locate devices on the bus
-  Serial.print("Locating devices...");
-  sensors.begin();
-  Serial.print("Found ");
-  Serial.print(sensors.getDeviceCount(), DEC);
-  Serial.println(" devices.");
+  initIO();
 
-  // report parasite power requirements
-  Serial.print("Parasite power is: "); 
-  if (sensors.isParasitePowerMode()) Serial.println("ON");
-  else Serial.println("OFF");
-  
-  //Get devices
-  if (!sensors.getAddress(insideThermometer, 0)) Serial.println("Unable to find address for Device 0"); 
-
-  // show the addresses we found on the bus
-  Serial.print("Device 0 Address: ");
-  printAddress(insideThermometer);
-  Serial.println();
-
-  // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
-  sensors.setResolution(insideThermometer, 9);
- 
-  Serial.print("Device 0 Resolution: ");
-  Serial.print(sensors.getResolution(insideThermometer), DEC); 
-  Serial.println();
-#endif
-
-#ifdef LED
-  pinMode(12, OUTPUT); // Blue
-  pinMode(13, OUTPUT); // Green
-  pinMode(14, OUTPUT); // Yellow
-  pinMode(15, OUTPUT); // Red
-#endif
-
-#ifdef DHTTYPE
-  dht.begin();
-#endif
+  initDhtSensor();
 
   pinMode(TX_PIN, OUTPUT);
 
-  Serial.println();
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  
-  WiFi.begin(ssid, pass);
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
- 
-  Serial.println("");
-  Serial.println("WiFi connected");  
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  initWifi();
 
+#ifdef WIFI_SERVER
   // Start the server
   server.begin();
+#endif
+
+  initTime();
+
+#ifdef AZURE
+  // initIoThubClient();
+  iotHubClientHandle = IoTHubClient_LL_CreateFromConnectionString(connectionString, MQTT_Protocol);
+  if (iotHubClientHandle == NULL)
+  {
+    Serial.println("Failed on IoTHubClient_CreateFromConnectionString.");
+    while (1);
+  }
+
+  Serial.println("IoT Hub done!.");
+
+  IoTHubClient_LL_SetOption(iotHubClientHandle, "product_info", "HappyPath_AdafruitFeatherHuzzah-C");
+  IoTHubClient_LL_SetMessageCallback(iotHubClientHandle, receiveMessageCallback, NULL);
+  IoTHubClient_LL_SetDeviceMethodCallback(iotHubClientHandle, deviceMethodCallback, NULL);
+  IoTHubClient_LL_SetDeviceTwinCallback(iotHubClientHandle, twinCallback, NULL);
+#endif
+
+  Serial.println("Setup done!.");
 }
 
+static int messageCount = 1;
 void loop()
 {
 #ifdef WIFI_SERVER
@@ -229,49 +205,176 @@ void loop()
  
     Serial.println("[Client disonnected]");
   }
+#endif
 
+#ifdef MQTT
   if (!mqttClient.connected()) {
     reconnect();
   }
-#endif
 
   mqttClient.loop();
+#endif
 
-  long now = millis();
-  if(now - lastMsg > sensorInterval) {
-    lastMsg = now;
+  if(time(NULL) > lastPublish + interval) {
     publishSensors();
-    Serial.println("Published messages");
+    lastPublish = time(NULL);
+  }
+
+#ifdef AZURE
+  IoTHubClient_LL_DoWork(iotHubClientHandle);
+#endif
+
+  delay(10);
+}
+
+void initWifi() {
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, pass);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+ 
+  Serial.println("");
+  Serial.println("WiFi connected");  
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+
+void initTime() {
+  time_t epochTime;
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  while (true)
+  {
+    epochTime = time(NULL);
+
+    if (epochTime == 0)
+    {
+      Serial.println("Fetching NTP epoch time failed! Waiting 2 seconds to retry.");
+      delay(2000);
+    }
+    else
+    {
+      Serial.printf("Fetched NTP epoch time is: %lu.\r\n", epochTime);
+      break;
+    }
   }
 }
 
-void publishSensors() {
-  float value;
+void initDallas() {
+  Serial.println();
+#ifdef DALLAS
+  Serial.println("Setup Dallas Temperature Sensor");
 
+  // locate devices on the bus
+  Serial.print("Locating devices...");
+  sensors.begin();
+  Serial.print("Found ");
+  //Serial.print(sensors.getDeviceCount(), DEC);
+  Serial.print(sensors.getDeviceCount());
+  Serial.println(" devices.");
+
+  // report parasite power requirements
+  Serial.print("Parasite power is: "); 
+  if (sensors.isParasitePowerMode()) Serial.println("ON");
+  else Serial.println("OFF");
+  
+  //Get devices
+  if (!sensors.getAddress(insideThermometer, 0)) Serial.println("Unable to find address for Device 0"); 
+
+  // show the addresses we found on the bus
+  Serial.print("Device 0 Address: ");
+  printAddress(insideThermometer);
+  Serial.println();
+
+  // set the resolution to 9 bit (Each Dallas/Maxim device is capable of several different resolutions)
+  sensors.setResolution(insideThermometer, 9);
+ 
+  Serial.print("Device 0 Resolution: ");
+  //Serial.print(sensors.getResolution(insideThermometer), DEC);
+  Serial.print(sensors.getResolution(insideThermometer)); 
+  Serial.println();
+#else
+  Serial.println("Dallas Temperature Sensor not defined");
+#endif
+}
+
+void initDhtSensor() {
+#ifdef DHTTYPE
+  dht.begin();
+#endif
+}
+
+void initIO() {
+#ifdef IO
+  pinMode(12, OUTPUT); // Blue
+  pinMode(13, OUTPUT); // Green
+  pinMode(14, OUTPUT); // Yellow
+  pinMode(15, OUTPUT); // Red
+#endif
+}
+
+
+void publishSensors() {
+  float temp1;
+  float temp2;
+  float hum1;
+
+#ifdef MQTT
   if (!mqttClient.connected()) {
     reconnect();
   }
   //mqttClient.loop();
-
-#ifdef DALLAS
-  sensors.requestTemperatures(); // Send the command to get temperatures
-  value = sensors.getTempC(insideThermometer);
-  dtostrf(value,3,1,payload);
-  mqttClient.publish("k16/esp1/temp2", payload);
 #endif
 
 #ifdef DHTTYPE
-  value = dht.readTemperature();
-  dtostrf(value,3,1,payload);
+  temp1 = dht.readTemperature();
+  hum1 = dht.readHumidity();
+#endif
+
+#ifdef DALLAS
+  sensors.requestTemperatures(); // Send the command to get temperatures
+  temp2 = sensors.getTempC(insideThermometer);
+#endif
+
+#ifdef MQTT
+  dtostrf(temp1,3,1,payload);
   mqttClient.publish("k16/esp1/temp1", payload);
 
-  value = dht.readHumidity();
-  dtostrf(value,2,0,payload);
+  dtostrf(hum1,2,0,payload);
   mqttClient.publish("k16/esp1/hum1", payload);
+
+  dtostrf(temp2,3,1,payload);
+  mqttClient.publish("k16/esp1/temp2", payload);  
+  Serial.print("Published to mqtt broker: ");
+  Serial.println(MQTT_SERVER);
+#endif
+
+#ifdef AZURE
+  if (!messagePending && messageSending)
+  {
+    char messagePayload[MESSAGE_MAX_LEN];
+    bool temperatureAlert = readMessage(messageCount, temp1, hum1, temp2, messagePayload);
+    sendMessage(iotHubClientHandle, messagePayload, temperatureAlert);
+    messageCount++;
+  }
+  else {
+    Serial.println("No message sent to Azure: ");
+    Serial.print("* messagePending: ");
+    Serial.println(messagePending);
+    Serial.print("* messageSending: ");
+    Serial.println(messageSending);
+  }
 #endif
 }
 
-
+#ifdef WIFI_SERVER
 String process(WiFiClient client) {
   
   // Jump over HTTP action
@@ -291,13 +394,13 @@ String process(WiFiClient client) {
     setSwitch(client);
   }
   else if (command == "setblind") {
+#ifdef HASTA
     setBlind(client);
+#endif
   }
-  /*
   else if (command == "getweather") {
     return getWeather(client);
   }
-  */
   else {
     Serial.print("Received unknown command: ");
     Serial.println(command);
@@ -311,6 +414,7 @@ String process(WiFiClient client) {
             "Content-Type: text/html\r\n" +
             "\r\n";
 }
+#endif
 
 void setSwitch(unsigned long remoteId, unsigned int switchId, bool on) {
   Serial.print("Remote: ");
@@ -360,6 +464,7 @@ void setSwitch(WiFiClient client) {
   transmitter.sendUnit(device-1, on);
 }
 
+#ifdef HASTA
 void setBlind(WiFiClient client) {
   String command = client.readStringUntil('/');
   int unit = client.parseInt();
@@ -387,8 +492,9 @@ void setBlind(WiFiClient client) {
     }
   }
 }
+#endif
 
-void setLed(int pin, bool on)
+void setIO(int pin, bool on)
 {
   if ((pin >= 12) && (pin <= 16)) {
     if (on) {
@@ -400,7 +506,6 @@ void setLed(int pin, bool on)
   }
 }
 
-/*
 String getWeather(WiFiClient client)
 {
   int unit = client.parseInt();
@@ -412,17 +517,20 @@ String getWeather(WiFiClient client)
   
   switch(unit) {
     case 0: // Dallas      
+#ifdef DALLAS
       sensors.requestTemperatures(); // Send the command to get temperatures
       Serial.println("DONE");
       t = sensors.getTempC(insideThermometer);
       h = 0;
+#endif
       break;
     case 1: // DHT
+#ifdef DHTTYPE
       h = dht.readHumidity();
       t = dht.readTemperature();
 
       // Check if any reads failed and exit early (to try again).
-      if (isnan(h) || isnan(t)) {
+      if (std::isnan(h) || std::isnan(t)) {
         Serial.println("Failed to read from DHT sensor!");
 
         return String(
@@ -430,6 +538,7 @@ String getWeather(WiFiClient client)
                 "Content-Type: text/html\r\n"
                 "\r\n");
       }
+#endif
       break;
   } 
     
@@ -459,7 +568,6 @@ String getWeather(WiFiClient client)
             "}\r\n"
             "\r\n");
 }
-*/
 
 // function to print a device address
 void printAddress(DeviceAddress deviceAddress)
@@ -471,13 +579,14 @@ void printAddress(DeviceAddress deviceAddress)
   }
 }
 
+#ifdef MQTT
 // Mqtt reconnect
 void reconnect() {
   // Loop until we're reconnected
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqttClient.connect(deviceid)) {
+    if (mqttClient.connect(DEVICE_ID)) {
       Serial.println("connected");
       // Resubscribe
 #ifdef NEXA
@@ -498,6 +607,7 @@ void reconnect() {
     }
   }
 }
+#endif
 
 
 
