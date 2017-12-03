@@ -426,13 +426,13 @@ void setSwitch(unsigned long remoteId, unsigned int switchId, bool on) {
   Serial.print("On: ");
   Serial.println(on);
   
-  NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, 1);
+  NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, nbrCalls);
 
-  for(int i=0; i<nbrCalls; i++)
-  {
+  //for(int i=0; i<nbrCalls; i++)
+  //{
     transmitter.sendUnit(switchId - 1, on);
-    delay(10);
-  }
+  //  delay(10);
+  //}
 }
 
 // Custom function accessible by the API
@@ -448,7 +448,7 @@ void setSwitch(WiFiClient client) {
 
   unsigned long remoteId = (unsigned long)client.parseInt();
 
-  NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, 1);
+  NewRemoteTransmitter transmitter(remoteId, TX_PIN, 275, nbrCalls);
 
   client.flush();
   
@@ -595,8 +595,8 @@ void reconnect() {
 #ifdef HASTA
       mqttClient.subscribe("cmd/k16/hasta/#");
 #endif
-#ifdef LED
-      mqttClient.subscribe("cmd/k16/led/#");
+#ifdef IO
+      mqttClient.subscribe("cmd/k16/io/#");
 #endif
     } else {
       Serial.print("failed, rc=");
