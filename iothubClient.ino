@@ -131,11 +131,12 @@ int deviceMethodCallback(
     }
     temp[size] = '\0';
 
-/* replace with setled, setSwitch and setBlind
-    if (strcmp(methodName, "start") == 0)
+    //replace with setled, setSwitch and setBlind
+    if (strcmp(methodName, "nexa") == 0)
     {
-        start();
+        parseNexaMessage(temp);
     }
+ /*
     else if (strcmp(methodName, "stop") == 0)
     {
         stop();
@@ -144,18 +145,19 @@ int deviceMethodCallback(
     {
         parseLedMethodPayload(temp);
     }
+ */
     else
     {
         Serial.printf("No method %s found.\r\n", methodName);
         responseMessage = notFound;
         result = 404;
     }
-*/
 
+Serial.printf("Done");
     *response_size = strlen(responseMessage);
     *response = (unsigned char *)malloc(*response_size);
     strncpy((char *)(*response), responseMessage, *response_size);
-
+Serial.printf("Returning");
     return result;
 }
 
@@ -193,6 +195,22 @@ void parseTwinMessage(char *message)
     else if (root.containsKey("interval"))
     {
         interval = root["interval"];
+    }
+}
+
+void parseNexaMessage(char *message)
+{
+    StaticJsonBuffer<MESSAGE_MAX_LEN> jsonBuffer;
+    JsonObject &root = jsonBuffer.parseObject(message);
+    if (!root.success())
+    {
+        Serial.printf("Parse %s failed.\r\n", message);
+        return;
+    }
+
+    if (root.containsKey("remoteId") && root.containsKey("switchId") && root.containsKey("on") )
+    {
+        setSwitch((unsigned long)root["remoteId"], (unsigned int)root["switchId"], (bool)root["on"]);
     }
 }
 

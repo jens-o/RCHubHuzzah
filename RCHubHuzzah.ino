@@ -20,7 +20,7 @@
 #include <AzureIoTProtocol_MQTT.h>
 #include <AzureIoTUtility.h>
 
-#include "config_esp2.h"
+#include "config_esp1.h"
 
 static bool messagePending = false;
 static bool messageSending = true;
@@ -78,14 +78,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     pld[i] = (char)payload[i];
   }
 
-  if (strcmp(device, "nexa") == 0) {
+  Serial.print("Payload: ");
+  Serial.println(pld);
+
+  if (strncmp(device, "nexa", 4) == 0) {
     unsigned long remoteId;
     unsigned int switchId;
     
     if ((remoteId = strtoul(subDevice1, NULL, 10)) > 0) {
       if ((switchId = (unsigned int)strtoul(subDevice2, NULL, 10)) > 0) {
         if (switchId <= 3) {
-          if ((strcmp(pld, "on") == 0) || (strcmp(pld, "1") == 0) || (strcmp(pld, "true") == 0))
+          if ((strncmp(pld, "on", 2) == 0) || (strncmp(pld, "1", 1) == 0) || (strncmp(pld, "true", 4) == 0))
             setSwitch(remoteId, switchId, true);
           else
             setSwitch(remoteId, switchId, false);
@@ -93,7 +96,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       }
     }
   }
-  else if (strcmp(device, "hasta") == 0) {
+  else if (strncmp(device, "hasta", 5) == 0) {
     unsigned long remoteId;
     unsigned int unitId;
     
@@ -103,14 +106,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 #ifdef HASTA
           for(int i=0; i<nbrCalls; i++)
           {
-            if (strcmp(pld, "stop") == 0) {
+            if (strncmp(pld, "stop", 4) == 0) {
               hastaBlind.stop(remoteId, unitId);
+              Serial.println("Hasta Stop");
             }
-            else if (strcmp(pld, "down") == 0) {
+            else if (strncmp(pld, "down", 4) == 0) {
               hastaBlind.down(remoteId, unitId);
+              Serial.println("Hasta Down");
             }
-            else if (strcmp(pld, "up") == 0) {
+            else if (strncmp(pld, "up", 2) == 0) {
               hastaBlind.up(remoteId, unitId);
+              Serial.println("Hasta Up");
             }
           }
 #endif
@@ -430,8 +436,8 @@ void setSwitch(unsigned long remoteId, unsigned int switchId, bool on) {
 
   //for(int i=0; i<nbrCalls; i++)
   //{
-    transmitter.sendUnit(switchId - 1, on);
-  //  delay(10);
+  transmitter.sendUnit(switchId - 1, on);
+  delay(500);
   //}
 }
 
