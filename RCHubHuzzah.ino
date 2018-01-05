@@ -15,12 +15,14 @@
 #include "DHT.h"
 #include <PubSubClient.h>
 #include <stdlib.h>
+#include <Wire.h>
+#include <t5403.h>
 
 #include <AzureIoTHub.h>
 #include <AzureIoTProtocol_MQTT.h>
 #include <AzureIoTUtility.h>
 
-#include "config_esp1.h"
+#include "config_esp2.h"
 
 static bool messagePending = false;
 static bool messageSending = true;
@@ -41,6 +43,16 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress insideThermometer;
 #endif
 
+#ifdef T5403UNIT
+T5403 barometer(MODE_I2C);
+//Create variables to store results
+float temperature_c, temperature_f;
+double pressure_abs, pressure_relative, altitude_delta, pressure_baseline;
+
+// Create Variable to store altitude in (m) for calculations;
+double base_altitude = 10.0; 
+#endif
+
 #ifdef WIFI_SERVER
 // Create an instance of the server
 WiFiServer server(LISTEN_PORT);
@@ -54,9 +66,6 @@ Hasta hastaBlind = Hasta(TX_PIN);
 // Initialize DHT sensor.
 DHT dht(DHTPIN, DHTTYPE);
 #endif
-
-// Create Variable to store altitude in (m) for calculations;
-double base_altitude = 1655.0; // Altitude of SparkFun's HQ in Boulder, CO. in (m)
 
 #ifdef MQTT
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -158,6 +167,14 @@ void setup(void)
   pinMode(TX_PIN, OUTPUT);
 
   initWifi();
+
+#ifdef T5403UNIT
+  //Retrieve calibration constants for conversion math.
+  barometer.begin();
+  
+  // Grab a baseline pressure for delta altitude calculation.
+  pressure_baseline = barometer.getPressure(MODE_ULTRA);
+#endif
 
 #ifdef WIFI_SERVER
   // Start the server
@@ -349,6 +366,15 @@ void publishSensors() {
   temp2 = sensors.getTempC(insideThermometer);
 #endif
 
+#ifdef T5403UNIT
+  temperature_c = barometer.getTemperature(CELSIUS);
+  pressure_abs  = barometer.getPressure(MODE_ULTRA);
+
+  // Convert abs pressure with the help of altitude into relative pressure
+  // This is used in Weather stations.
+  pressure_relative = sealevel(pressure_abs, base_altitude);
+#endif
+
 #ifdef MQTT
   dtostrf(temp1,3,1,payload);
   mqttClient.publish("k16/esp1/temp1", payload);
@@ -358,6 +384,13 @@ void publishSensors() {
 
   dtostrf(temp2,3,1,payload);
   mqttClient.publish("k16/esp1/temp2", payload);  
+
+  dtostrf(temperature_c/100,3,1,payload);
+  mqttClient.publish("k16/esp1/temp3", payload);  
+
+  dtostrf(pressure_relative,3,1,payload);
+  mqttClient.publish("k16/esp1/prel", payload);  
+
   Serial.print("Published to mqtt broker: ");
   Serial.println(MQTT_SERVER);
 #endif
@@ -583,6 +616,14 @@ void printAddress(DeviceAddress deviceAddress)
     if (deviceAddress[i] < 16) Serial.print("0");
     Serial.print(deviceAddress[i], HEX);
   }
+}
+
+double sealevel(double P, double A)
+// Given a pressure P (Pa) taken at a specific altitude (meters),
+// return the equivalent pressure (mb) at sea level.
+// This produces pressure readings that can be used for weather measurements.
+{
+  return((P/100)/pow(1-(A/44330.0),5.255));
 }
 
 #ifdef MQTT
