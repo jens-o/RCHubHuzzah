@@ -14,7 +14,7 @@
 #include <DallasTemperature.h>
 #include "DHT.h"
 #include <PubSubClient.h>
-#include <stdlib.h>
+//#include <stdlib.h>
 #include <Wire.h>
 #include <t5403.h>
 
@@ -367,29 +367,38 @@ void publishSensors() {
 #endif
 
 #ifdef T5403UNIT
-  temperature_c = barometer.getTemperature(CELSIUS);
+  temperature_c = barometer.getTemperature(CELSIUS) / 100;
   pressure_abs  = barometer.getPressure(MODE_ULTRA);
 
   // Convert abs pressure with the help of altitude into relative pressure
   // This is used in Weather stations.
   pressure_relative = sealevel(pressure_abs, base_altitude);
+
+  //Serial.print("Pressure: ");
+  //Serial.println(pressure_relative);
 #endif
 
 #ifdef MQTT
+#ifdef DHTTYPE
   dtostrf(temp1,3,1,payload);
-  mqttClient.publish("k16/esp1/temp1", payload);
+  mqttClient.publish(_temp1, payload);
 
   dtostrf(hum1,2,0,payload);
-  mqttClient.publish("k16/esp1/hum1", payload);
+  mqttClient.publish(_hum1, payload);
+#endif
 
+#ifdef DALLAS
   dtostrf(temp2,3,1,payload);
-  mqttClient.publish("k16/esp1/temp2", payload);  
+  mqttClient.publish(_temp2, payload);  
+#endif
 
-  dtostrf(temperature_c/100,3,1,payload);
-  mqttClient.publish("k16/esp1/temp3", payload);  
+#ifdef T5403UNIT
+  dtostrf(temperature_c,3,1,payload);
+  mqttClient.publish(_temp2, payload);  
 
   dtostrf(pressure_relative,3,1,payload);
-  mqttClient.publish("k16/esp1/prel", payload);  
+  mqttClient.publish(_pres1, payload);  
+#endif
 
   Serial.print("Published to mqtt broker: ");
   Serial.println(MQTT_SERVER);
@@ -399,7 +408,7 @@ void publishSensors() {
   if (!messagePending && messageSending)
   {
     char messagePayload[MESSAGE_MAX_LEN];
-    bool temperatureAlert = readMessage(messageCount, temp1, hum1, temp2, messagePayload);
+    bool temperatureAlert = readMessage(messageCount, temp1, hum1, temperature_c, pressure_relative, messagePayload);
     sendMessage(iotHubClientHandle, messagePayload, temperatureAlert);
     messageCount++;
   }
