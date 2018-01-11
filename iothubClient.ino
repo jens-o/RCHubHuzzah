@@ -214,7 +214,7 @@ void parseNexaMessage(char *message)
     }
 }
 
-bool readMessage(int messageId, float temp1, float hum1, float temp2, float pres1, char *payload)
+bool readMessage(int messageId, float temp1, float temp2, float hum1, float pres1, char *payload)
 {
     StaticJsonBuffer<MESSAGE_MAX_LEN> jsonBuffer;
     JsonObject &root = jsonBuffer.createObject();
@@ -223,7 +223,7 @@ bool readMessage(int messageId, float temp1, float hum1, float temp2, float pres
     bool temperatureAlert = false;
 
 #ifdef DHTTYPE
-    root[AZtemp1] = temp1;
+    root[temp1tag] = temp1;
     /*
     if (temp1 > TEMPERATURE_ALERT)
     {
@@ -231,16 +231,16 @@ bool readMessage(int messageId, float temp1, float hum1, float temp2, float pres
     }
     */
 
-    root[AZhum1] = hum1;
+    root[hum1tag] = hum1;
 #endif
 
 #ifdef DALLAS
-    root[AZtemp2] = temp2;
+    root[temp2tag] = temp2;
 #endif
 
 #ifdef T5403UNIT
-    root[AZtemp2] = temp2;
-    root[AZpres1] = pres1;
+    root[temp2tag] = temp2;
+    root[pres1tag] = pres1;
 #endif
     
     root.printTo(payload, MESSAGE_MAX_LEN);

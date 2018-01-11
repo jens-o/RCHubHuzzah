@@ -32,6 +32,16 @@ int lastPublish = 0;
 
 int nbrCalls = DEFAULT_NBR_CALLS;
 
+// tags
+static char temp1topic[20];
+static char temp1tag[15];
+static char temp2topic[20];
+static char temp2tag[15];
+static char pres1topic[20];
+static char pres1tag[15];
+static char hum1topic[20];
+static char hum1tag[15];
+
 #ifdef DALLAS
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -168,13 +178,20 @@ void setup(void)
 
   initWifi();
 
-#ifdef T5403UNIT
-  //Retrieve calibration constants for conversion math.
-  barometer.begin();
+  initT5403();
+
+  //Init topic names
+  sprintf(temp1topic, "%s/%s/temp1", HOUSE, NODE_ID);
+  sprintf(temp1tag, "%s_temp1", NODE_ID);
   
-  // Grab a baseline pressure for delta altitude calculation.
-  pressure_baseline = barometer.getPressure(MODE_ULTRA);
-#endif
+  sprintf(temp2topic, "%s/%s/temp2", HOUSE, NODE_ID);
+  sprintf(temp2tag, "%s_temp2", NODE_ID);
+
+  sprintf(pres1topic, "%s/%s/pres1", HOUSE, NODE_ID);
+  sprintf(pres1tag, "%s_pres1", NODE_ID);
+
+  sprintf(hum1topic, "%s/%s/hum1", HOUSE, NODE_ID);
+  sprintf(hum1tag, "%s_hum1", NODE_ID);
 
 #ifdef WIFI_SERVER
   // Start the server
@@ -290,6 +307,16 @@ void initTime() {
   }
 }
 
+void initT5403() {
+#ifdef T5403UNIT
+  //Retrieve calibration constants for conversion math.
+  barometer.begin();
+  
+  // Grab a baseline pressure for delta altitude calculation.
+  pressure_baseline = barometer.getPressure(MODE_ULTRA);
+#endif
+}
+
 void initDallas() {
   Serial.println();
 #ifdef DALLAS
@@ -381,23 +408,23 @@ void publishSensors() {
 #ifdef MQTT
 #ifdef DHTTYPE
   dtostrf(temp1,3,1,payload);
-  mqttClient.publish(_temp1, payload);
+  mqttClient.publish(temp1topic, payload);
 
   dtostrf(hum1,2,0,payload);
-  mqttClient.publish(_hum1, payload);
+  mqttClient.publish(hum1topic, payload);
 #endif
 
 #ifdef DALLAS
   dtostrf(temp2,3,1,payload);
-  mqttClient.publish(_temp2, payload);  
+  mqttClient.publish(temp2topic, payload);  
 #endif
 
 #ifdef T5403UNIT
   dtostrf(temperature_c,3,1,payload);
-  mqttClient.publish(_temp2, payload);  
+  mqttClient.publish(temp2topic, payload);  
 
   dtostrf(pressure_relative,3,1,payload);
-  mqttClient.publish(_pres1, payload);  
+  mqttClient.publish(pres1topic, payload);  
 #endif
 
   Serial.print("Published to mqtt broker: ");
@@ -408,7 +435,7 @@ void publishSensors() {
   if (!messagePending && messageSending)
   {
     char messagePayload[MESSAGE_MAX_LEN];
-    bool temperatureAlert = readMessage(messageCount, temp1, hum1, temperature_c, pressure_relative, messagePayload);
+    bool temperatureAlert = readMessage(messageCount, temp1, temperature_c, hum1, pressure_relative, messagePayload);
     sendMessage(iotHubClientHandle, messagePayload, temperatureAlert);
     messageCount++;
   }
@@ -642,7 +669,7 @@ void reconnect() {
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqttClient.connect(DEVICE_ID)) {
+    if (mqttClient.connect(NODE_ID)) {
       Serial.println("connected");
       // Resubscribe
 #ifdef NEXA
