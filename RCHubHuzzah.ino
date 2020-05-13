@@ -18,10 +18,6 @@
 #include <Wire.h>
 #include <t5403.h>
 
-#include <AzureIoTHub.h>
-#include <AzureIoTProtocol_MQTT.h>
-#include <AzureIoTUtility.h>
-
 #include "config_esp2.h"
 
 static bool messagePending = false;
@@ -162,7 +158,6 @@ PubSubClient mqttClient(MQTT_SERVER, MQTT_PORT, mqttCallback, client);
 
 char payload[20];
 
-static IOTHUB_CLIENT_LL_HANDLE iotHubClientHandle;
 void setup(void)
 {
   // Start Serial
@@ -199,23 +194,6 @@ void setup(void)
 #endif
 
   initTime();
-
-#ifdef AZURE
-  // initIoThubClient();
-  iotHubClientHandle = IoTHubClient_LL_CreateFromConnectionString(connectionString, MQTT_Protocol);
-  if (iotHubClientHandle == NULL)
-  {
-    Serial.println("Failed on IoTHubClient_CreateFromConnectionString.");
-    while (1);
-  }
-
-  Serial.println("IoT Hub done!.");
-
-  IoTHubClient_LL_SetOption(iotHubClientHandle, "product_info", "HappyPath_AdafruitFeatherHuzzah-C");
-  IoTHubClient_LL_SetMessageCallback(iotHubClientHandle, receiveMessageCallback, NULL);
-  IoTHubClient_LL_SetDeviceMethodCallback(iotHubClientHandle, deviceMethodCallback, NULL);
-  IoTHubClient_LL_SetDeviceTwinCallback(iotHubClientHandle, twinCallback, NULL);
-#endif
 
   Serial.println("Setup done!.");
 }
@@ -259,10 +237,6 @@ void loop()
     publishSensors();
     lastPublish = time(NULL);
   }
-
-#ifdef AZURE
-  IoTHubClient_LL_DoWork(iotHubClientHandle);
-#endif
 
   delay(10);
 }
@@ -429,23 +403,6 @@ void publishSensors() {
 
   Serial.print("Published to mqtt broker: ");
   Serial.println(MQTT_SERVER);
-#endif
-
-#ifdef AZURE
-  if (!messagePending && messageSending)
-  {
-    char messagePayload[MESSAGE_MAX_LEN];
-    bool temperatureAlert = readMessage(messageCount, temp1, temperature_c, hum1, pressure_relative, messagePayload);
-    sendMessage(iotHubClientHandle, messagePayload, temperatureAlert);
-    messageCount++;
-  }
-  else {
-    Serial.println("No message sent to Azure: ");
-    Serial.print("* messagePending: ");
-    Serial.println(messagePending);
-    Serial.print("* messageSending: ");
-    Serial.println(messageSending);
-  }
 #endif
 }
 
@@ -691,7 +648,3 @@ void reconnect() {
   }
 }
 #endif
-
-
-
-

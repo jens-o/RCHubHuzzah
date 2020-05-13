@@ -4,9 +4,6 @@
 #define HOUSE "[Site name]"
 #define NODE_ID "[Node Id]"
 
-// Azure IoT Device
-#define DEVICE_ID "[Azure Device ID]"
-
 // The port to listen for incoming TCP connections
 #define LISTEN_PORT           80
 
@@ -37,10 +34,6 @@
 
 // REST
 #define WIFI_SERVER
-
-// AZURE
-#define AZURE
-static char connectionString[] = "[Azure IoT device connection string]"; 
 
 // The default nbr of 433 calls
 #define DEFAULT_NBR_CALLS 3
